@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <script>
+    /**************************************************************
+ *  SINGLE-KEY CHESS MOVE INPUT SYSTEM (Updated Implementation)
+ **************************************************************
+ * 
+============================
+   AUDIO + MEDIASESSION INPUT
+   ============================ */
+let speakSessionId = 0; // global session counter
+let charTimeout = null;  // global timeout handle
+let lastSpoken = "";
+
+function toNatoStarString(str) {
+  const nato = {
+    a: "alpha",   b: "bravo",    c: "charlie", d: "delta",
+    e: "echo",    f: "foxtrot",  g: "golf",    h: "hotel",
+    i: "india",   j: "juliett",  k: "kilo",    l: "lima",
+    m: "mike",    n: "november", o: "oscar",   p: "papa",
+    q: "quebec",  r: "romeo",    s: "sierra",  t: "tango",
+    u: "uniform", v: "victor",   w: "whiskey", x: "xray",
+    y: "yankee",  z: "zulu"
+  };
+
+  return str
+    .toLowerCase()
+    .split("")
+    .map(ch => {
+      if (nato[ch]) {
+        return `*${nato[ch]}*`;
+      }
+      return ch; // digits or non-letters
+    })
+    .join("");
+}
+
+function speak(text, delay = 300) {
+  if (!text) return;
+  lastSpoken = text;
+  console.log(text);
+
+  // Cancel any ongoing speech
+  window.speechSynthesis.cancel();
+
+  // Increment session to invalidate previous calls
+  speakSessionId++;
+  const session = speakSessionId;
+
+  // Clear any previous character timeouts
+  if (charTimeout) {
+    clearTimeout(charTimeout);
+    charTimeout = null;
+  }
+
+  const parts = text.split("*");
+  let i = 0;
+
+  function speakNextPart() {
+    if (session !== speakSessionId) return; // session invalidated
+    if (i >= parts.length) return;
+
+    const part = parts[i];
+    const speakNormally = i % 2 === 1;
+    i++;
+
+    if (speakNormally) {
+      const utterance = new SpeechSynthesisUtterance(part);
+      utterance.rate = 1;
+      utterance.onend = speakNextPart;
+      window.speechSynthesis.speak(utterance);
+    } else {
+      let j = 0;
+
+      function speakNextChar() {
+        if (session !== speakSessionId) return; // session invalidated
+        if (j >= part.length) {
+          speakNextPart();
+          return;
+        }
+        const utterance = new SpeechSynthesisUtterance(part[j]);
+        utterance.rate = 1;
+        window.speechSynthesis.speak(utterance);
+        j++;
+        charTimeout = setTimeout(speakNextChar, delay);
+      }
+
+      speakNextChar();
+    }
+  }
+
+  speakNextPart();
+}
+
+/* ============================
+   STOCKFISH ENGINE SETUP
+   ============================ */
+
+const engine = new Worker("stockfish.js");
+
+let moves = [];             
+let engineSuggested = null;
+let engineSide = null;
+
+
+engine.onmessage = function(event) {
+  if (event && event.data && event.data.startsWith("bestmove")) {
+    inputLocked = false;
+    const bestMove = event.data.split(" ")[1];
+    speak("*Best " + engineSide + "*" + toNatoStarString(bestMove)); //weird
+    engineSuggested = bestMove;
+    currentState = "postThinking";
+    firstPostPressTime = null;
+  }
+};
+
+engine.postMessage("uci");
+engine.postMessage("isready");
+engine.postMessage("ucinewgame");
+
+/* ============================
+   STATE VARIABLES
+   ============================ */
+
+let currentState = "constructing";
+
+let lastPressTime = 0;
+let currentCoordinate = 0;
+let coordinates = [];
+
+let rapidPressCount = 0;
+
+let firstPostPressTime = null;
+
+let inputLocked = false;
+
+/* ============================
+      UTILITY FUNCTIONS
+   ============================ */
+
+function resetAll() {
+  currentState = "constructing";
+  currentCoordinate = 0;
+  coordinates = [];
+  rapidPressCount = 0;
+  firstPostPressTime = null;
+}
+
+function mapCoordinate(index, value) {
+  if (value < 1 || value > 8) return null;
+
+  // even indices (0,2) → file
+  if (index % 2 === 0) return "abcdefgh"[value - 1];
+
+  // odd indices (1,3) → rank
+  return String(value);
+}
+
+function finalizeCoordinate() {
+
+  const mapped = mapCoordinate(coordinates.length, currentCoordinate);
+
+  if (!mapped) return;
+
+  coordinates.push(mapped);
+  currentCoordinate = 0;
+  rapidPressCount = 0;
+
+  if (coordinates.length === 4) {
+    const move = coordinates.join("");
+    speak("*Go* " + toNatoStarString(move) + (moves.length % 2 == 0 ? " *white* " : " *black* "));
+    moves.push(move);
+    removedMoves = []
+
+    engine.postMessage(`position startpos moves ${moves.join(" ")}`);
+    engineSide = (moves.length % 2 === 0 ? "white" : "black");
+    engine.postMessage("go depth 15");
+
+    inputLocked = true;
+    currentState = "thinking";
+  } else {
+    speak("*Does* " + toNatoStarString(coordinates.join("")));
+  }
+}
+
+function cancelAll(custom) {
+  speak(custom ? custom : "*Cancelled*");
+  clearTimeout(coordinateTimer);
+  clearTimeout(postThinkingTimer);
+  inputLocked = true;
+  setTimeout(() => {
+    inputLocked = false;
+  }, 1000);
+  resetAll();
+
+}
+
+function acceptEngineMove() {
+  if (!engineSuggested) return;
+
+  speak("*Approved.*")
+  moves.push(engineSuggested);
+  removedMoves = [];
+  engineSuggested = null;
+
+  engine.postMessage(`position startpos moves ${moves.join(" ")}`);
+  engineSide = (moves.length % 2 === 0 ? "white" : "black");
+  engine.postMessage("go depth 15");
+  
+  inputLocked = true;
+  currentState = "thinking";
+}
+
+function startNewMoveFromPostThinking() {
+  currentState = "constructing";
+  coordinates = [];
+  currentCoordinate = 0;  
+  speak("*Disapproved.*");
+}
+
+/* ============================
+        MAIN INPUT LOGIC
+   ============================ */
+const validateCoordinateDelay = 1000;
+const approveDelay = 2000;
+let coordinateTimer = null;
+
+function startCoordinateTimer() {
+  clearTimeout(coordinateTimer);
+  coordinateTimer = setTimeout(() => {
+    // Timer fired → finalize coordinate automatically
+    finalizeCoordinate();
+  }, validateCoordinateDelay);
+}
+
+let postThinkingTimer = null;
+
+function startPostThinkingTimer() {
+  speak("*Approve?*")
+  clearTimeout(postThinkingTimer);
+  postThinkingTimer = setTimeout(() => {
+    // No press for 4 seconds → accept engine move
+    acceptEngineMove();
+    firstPostPressTime = null;
+  }, approveDelay);
+}
+
+
+function handleInput() {
+  if (inputLocked) return;
+
+  const now = performance.now();
+  const delta = now - lastPressTime;
+  lastPressTime = now;
+
+  /* ===========================================
+     RAPID CANCELLATION RULE
+     =========================================== */
+  if (delta < validateCoordinateDelay) {
+    rapidPressCount++;
+  } else {
+    rapidPressCount = 1;
+  }
+
+  if (rapidPressCount > 8) {
+    return cancelAll();
+  }
+
+  /* ===========================================
+     STATE MACHINE
+     =========================================== */
+
+  switch (currentState) {
+
+    case "constructing":
+      if (delta < validateCoordinateDelay || currentCoordinate == 0) {
+        currentCoordinate++;
+        if (currentCoordinate === 9) return cancelAll();
+        speak(toNatoStarString(mapCoordinate(coordinates.length, currentCoordinate)))
+      }
+      startCoordinateTimer();
+      break;
+
+    case "thinking":
+      break;
+
+    /* ======================================
+       UPDATED POST-THINKING BEHAVIOR
+       ====================================== */
+    case "postThinking":
+
+      // FIRST PRESS IN POST-THINKING
+      if (firstPostPressTime === null) {
+        firstPostPressTime = now;
+
+        // Start the acceptance timer
+        startPostThinkingTimer();
+        return;
+      }
+
+      // SECOND PRESS = REJECT IF BEFORE TIMEOUT
+      const sinceFirst = now - firstPostPressTime;
+
+      if (sinceFirst < approveDelay) {
+        // Cancel the acceptance timer
+        clearTimeout(postThinkingTimer);
+
+        // Reject engine move and start new human move (Option C)
+        startNewMoveFromPostThinking();
+        break;
+      }
+
+      break;
+
+  }
+}
+
+let removedMoves = [];
+
+document.addEventListener('keydown', function(event) {
+    // Check if the pressed key is the Space key
+    if (event.code === 'Space') {
+        event.preventDefault();
+        handleInput();
+    }
+    if (event.code === 'ArrowLeft') {
+        event.preventDefault();
+        removed = moves.pop();
+        removedMoves.push(removed);
+        cancelAll("*removed" + (moves.length % 2 == 0 ? " white* " : " black* ") + toNatoStarString(removed) + " *last move* " + toNatoStarString(moves[moves.length - 1]));
+    }
+    if (event.code === 'ArrowRight' && removedMoves.length != 0) {
+        event.preventDefault();
+        added = removedMoves.pop();
+        moves.push(added);
+        cancelAll("*added" + (moves.length % 2 == 0 ? " black* " : " white* ") + toNatoStarString(added));
+    }
+    if (event.code === 'ArrowUp') {
+        event.preventDefault();
+        speak(lastSpoken);
+    }
+});
+
+
+  </script>
+</body>
+</html>
