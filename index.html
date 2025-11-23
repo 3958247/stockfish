@@ -97,7 +97,7 @@ function speak(text, delay = 300) {
    STOCKFISH ENGINE SETUP
    ============================ */
 
-const engine = new Worker("stockfish.js");
+const engine = new Worker("https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js");
 
 let moves = [];             
 let engineSuggested = null;
