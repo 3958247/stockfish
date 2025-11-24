@@ -67,6 +67,7 @@
   <div id="board-wrapper">
     <div id="board"></div>
   </div>
+  <script src="chess.js"></script>
   <script>
 /**************************************************************
  *                      CONSTANTS
@@ -299,6 +300,7 @@ class GameState {
     this.lastPressTime = 0;
     /** @type {number|null} Timestamp of first post-thinking key press */
     this.firstPostPressTime = null;
+    this.chess = new Chess();
   }
 
   /** Resets coordinate input to initial state. */
@@ -332,6 +334,22 @@ class GameState {
       const move = this.coordinates.join("");
       const color = this.moves.length % 2 === 0 ? "white" : "black";
 
+      // Convert to chess.js move object
+      const moveObj = {
+        from: move.slice(0, 2),
+        to: move.slice(2, 4),
+        promotion: "q" // optional default promotion
+      };
+
+      // Check if move is legal
+      const result = this.chess.move(moveObj);
+
+      if (!result) {
+        cancelAll("*Illegal move*"); // move rejected
+        return;
+      }
+
+      // Move is valid, update game
       Speech.speak(`*Go* ${toNatoString(move)} *${color}*`);
       this.moves.push(move);
       this.removedMoves = [];
@@ -493,9 +511,15 @@ document.addEventListener("keydown", (event) => {
 function undoMove() {
   if (!Game.moves.length) return;
 
+  // Undo in chess.js
+  const undoneMove = Game.chess.undo();
+  if (!undoneMove) return;
+
+  // Remove from moves array
   const removed = Game.moves.pop();
   Game.removedMoves.push(removed);
 
+  // Speech feedback
   const last = Game.moves.length ? Game.moves[Game.moves.length - 1] : "";
   cancelAll(
     `*removed ${(Game.moves.length % 2 === 0 ? "white* " : "black* ")}${toNatoString(removed)} *last move* ${toNatoString(last)}`
@@ -509,16 +533,28 @@ function redoMove() {
   if (!Game.removedMoves.length) return;
 
   const added = Game.removedMoves.pop();
+
+  // Redo in chess.js
+  const moveObj = {
+    from: added.slice(0, 2),
+    to: added.slice(2, 4),
+    promotion: "q"
+  };
+  const result = Game.chess.move(moveObj);
+
+  if (!result) {
+    // Illegal redo (shouldn't happen)
+    Speech.speak("*Cannot redo move*");
+    return;
+  }
+
+  // Add to moves array
   Game.moves.push(added);
   cancelAll(`*added ${(Game.moves.length % 2 === 0 ? "black* " : "white* ")}${toNatoString(added)}`);
 
   updateBoard();
 }
 
-/** Repeats the last spoken text. */
-function repeatSpeech() {
-  Speech.speak(Speech.lastSpoken);
-}
 
 /**************************************************************
  *                    BOARD RENDER LOGIC
