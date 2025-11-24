@@ -413,8 +413,24 @@ function cancelAll(message = "*Cancelled*") {
 /** Accepts the engine's suggested move. */
 function acceptEngineMove() {
   if (!GameEngine.suggestedMove) return;
+
+  const move = GameEngine.suggestedMove;
+
+  // Apply move to chess.js
+  const moveObj = {
+    from: move.slice(0, 2),
+    to: move.slice(2, 4),
+    promotion: move.length === 5 ? move[4] : "q" // handle promotions if present
+  };
+  const result = Game.chess.move(moveObj);
+  if (!result) {
+    Speech.speak("*Illegal engine move*");
+    return;
+  }
+
+  // Update game state
   Speech.speak("*Approved.*");
-  Game.moves.push(GameEngine.suggestedMove);
+  Game.moves.push(move);
   Game.removedMoves = [];
   GameEngine.suggestedMove = null;
 
@@ -422,15 +438,6 @@ function acceptEngineMove() {
   GameEngine.requestMove(Game.moves);
   Game.inputLocked = true;
   Game.state = STATES.THINKING;
-}
-
-/** Rejects the engine's move and starts a new input. */
-function rejectEngineMoveStartNew() {
-  Game.state = STATES.CONSTRUCTING;
-  Game.coordinates = [];
-  Game.currentCoordinate = 0;
-  Speech.speak("*Disapproved.*");
-  updateBoard();
 }
 
 /**************************************************************
@@ -499,7 +506,8 @@ const KEY_ACTIONS = {
   Space: handleInput,
   ArrowLeft: undoMove,
   ArrowRight: redoMove,
-  ArrowUp: repeatSpeech
+  ArrowUp: repeatSpeech,
+  ArrowDown: () => location.reload()
 };
 
 document.addEventListener("keydown", (event) => {
