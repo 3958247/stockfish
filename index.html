@@ -555,6 +555,10 @@ function redoMove() {
   updateBoard();
 }
 
+/** Repeats the last spoken text. */
+function repeatSpeech() {
+  Speech.speak(Speech.lastSpoken);
+}
 
 /**************************************************************
  *                    BOARD RENDER LOGIC
