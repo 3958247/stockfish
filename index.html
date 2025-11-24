@@ -5,12 +5,22 @@
 /**************************************************************
  *                      CONSTANTS
  **************************************************************/
+
+/**
+ * Possible states of the game.
+ * @readonly
+ * @enum {string}
+ */
 const STATES = Object.freeze({
   CONSTRUCTING: "constructing",
   THINKING: "thinking",
   POST_THINKING: "postThinking",
 });
 
+/**
+ * Base timeout durations (in milliseconds).
+ * @readonly
+ */
 const TIMEOUTS = Object.freeze({
   BASE_COORD_VALIDATE: 1000,
   BASE_ENGINE_APPROVE: 2000,
@@ -31,8 +41,20 @@ const VOICE_DELAY          = TIMEOUTS.BASE_VOICE / SPEECH_RATE;
 /**************************************************************
  *                      UTILS
  **************************************************************/
+
+/**
+ * Sleep for a given duration.
+ * @param {number} ms - Duration in milliseconds.
+ * @returns {Promise<void>}
+ */
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
+/**
+ * Converts a string to NATO phonetic alphabet notation.
+ * Letters are wrapped in `*` for special pronunciation.
+ * @param {string} str - The input string.
+ * @returns {string} - NATO phonetic representation.
+ */
 const toNatoString = (str) => {
   const nato = {
     a: "alpha", b: "bravo", c: "charlie", d: "delta",
@@ -54,13 +76,25 @@ const toNatoString = (str) => {
 /**************************************************************
  *                      SPEECH MANAGER
  **************************************************************/
+
+/**
+ * Manages speech synthesis for the game.
+ */
 class SpeechManager {
   constructor() {
+    /** @type {number} Unique session id to prevent speech overlap */
     this.sessionId = 0;
+    /** @type {ReturnType<typeof setTimeout>|null} Timeout for character-by-character speech */
     this.charTimeout = null;
+    /** @type {string} Last spoken text */
     this.lastSpoken = "";
   }
 
+  /**
+   * Speak a text string with optional character-by-character delays.
+   * @param {string} text - The text to speak.
+   * @param {number} [delay=VOICE_DELAY] - Delay between characters in milliseconds.
+   */
   speak(text, delay = VOICE_DELAY) {
     if (!text) return;
 
@@ -117,7 +151,15 @@ const Speech = new SpeechManager();
 /**************************************************************
  *                    ENGINE MANAGER
  **************************************************************/
+
+/**
+ * Manages communication with the Stockfish chess engine.
+ */
 class EngineManager {
+  /**
+   * @param {(bestMove: string) => void} onMoveCallback - Callback when engine suggests a move.
+   * @param {() => void} onMateCallback - Callback when checkmate is detected.
+   */
   constructor(onMoveCallback, onMateCallback) {
     this.worker = new Worker("stockfish.js");
     this.suggestedMove = null;
@@ -140,10 +182,18 @@ class EngineManager {
     ["uci", "isready", "ucinewgame"].forEach(cmd => this.worker.postMessage(cmd));
   }
 
+  /**
+   * Sets the engine's position based on moves played.
+   * @param {string[]} moves - Array of moves in standard algebraic notation.
+   */
   setPosition(moves) {
     this.worker.postMessage(`position startpos moves ${moves.join(" ")}`);
   }
 
+  /**
+   * Requests the engine to compute the next move.
+   * @param {string[]} moves - Array of moves played so far.
+   */
   requestMove(moves) {
     this.setPosition(moves);
     this.sideToMove = moves.length % 2 === 0 ? "white" : "black";
@@ -157,20 +207,35 @@ let GameEngine = null;
 /**************************************************************
  *                     GAME STATE
  **************************************************************/
+
+/**
+ * Represents the current state of the game and input.
+ */
 class GameState {
   constructor() {
+    /** @type {STATES} */
     this.state = STATES.CONSTRUCTING;
+    /** @type {string[]} List of moves made */
     this.moves = [];
+    /** @type {string[]} List of removed moves for undo/redo */
     this.removedMoves = [];
+    /** @type {string[]} Current coordinate input */
     this.coordinates = [];
+    /** @type {number} Current numeric coordinate */
     this.currentCoordinate = 0;
+    /** @type {boolean} Whether input is temporarily locked */
     this.inputLocked = false;
+    /** @type {ReturnType<typeof setTimeout>|null} Timer for coordinate input */
     this.coordinateTimer = null;
+    /** @type {ReturnType<typeof setTimeout>|null} Timer for post-thinking approval */
     this.postThinkingTimer = null;
+    /** @type {number} Timestamp of last key press */
     this.lastPressTime = 0;
+    /** @type {number|null} Timestamp of first post-thinking key press */
     this.firstPostPressTime = null;
   }
 
+  /** Resets coordinate input to initial state. */
   resetInput() {
     this.state = STATES.CONSTRUCTING;
     this.coordinates = [];
@@ -178,11 +243,18 @@ class GameState {
     this.firstPostPressTime = null;
   }
 
+  /**
+   * Maps a numeric input to a board coordinate.
+   * @param {number} index - Index of the coordinate (0-3).
+   * @param {number} value - Numeric value (1-8).
+   * @returns {string|null} Board coordinate or null if invalid.
+   */
   mapCoordinate(index, value) {
     if (value < 1 || value > MAX_COORD_VALUE) return null;
     return index % 2 === 0 ? "abcdefgh"[value - 1] : String(value);
   }
 
+  /** Finalizes the current coordinate input and possibly makes a move. */
   finalizeCoordinate() {
     const mapped = this.mapCoordinate(this.coordinates.length, this.currentCoordinate);
     if (!mapped) return;
@@ -212,11 +284,14 @@ const Game = new GameState();
 /**************************************************************
  *                     INPUT & TIMERS
  **************************************************************/
+
+/** Starts or resets the coordinate input timer. */
 function startCoordinateTimer() {
   clearTimeout(Game.coordinateTimer);
   Game.coordinateTimer = setTimeout(() => Game.finalizeCoordinate(), COORD_VALIDATE_DELAY);
 }
 
+/** Starts the post-thinking approval timer. */
 function startPostThinkingTimer() {
   Speech.speak("*Approve?*");
   clearTimeout(Game.postThinkingTimer);
@@ -229,6 +304,11 @@ function startPostThinkingTimer() {
 /**************************************************************
  *                        ACTIONS
  **************************************************************/
+
+/**
+ * Cancels current input and resets the game state.
+ * @param {string} [message="*Cancelled*"] - Optional speech message.
+ */
 function cancelAll(message = "*Cancelled*") {
   Speech.speak(message);
   clearTimeout(Game.coordinateTimer);
@@ -238,6 +318,7 @@ function cancelAll(message = "*Cancelled*") {
   Game.resetInput();
 }
 
+/** Accepts the engine's suggested move. */
 function acceptEngineMove() {
   if (!GameEngine.suggestedMove) return;
   Speech.speak("*Approved.*");
@@ -249,6 +330,7 @@ function acceptEngineMove() {
   Game.state = STATES.THINKING;
 }
 
+/** Rejects the engine's move and starts a new input. */
 function rejectEngineMoveStartNew() {
   Game.state = STATES.CONSTRUCTING;
   Game.coordinates = [];
@@ -259,6 +341,8 @@ function rejectEngineMoveStartNew() {
 /**************************************************************
  *                    INPUT HANDLING
  **************************************************************/
+
+/** Handles input during the CONSTRUCTING state. */
 function handleConstructingInput() {
   const now = performance.now();
   const delta = now - Game.lastPressTime;
@@ -274,6 +358,7 @@ function handleConstructingInput() {
   startCoordinateTimer();
 }
 
+/** Handles input during the POST_THINKING state. */
 function handlePostThinkingInput() {
   const now = performance.now();
   if (Game.firstPostPressTime === null) {
@@ -288,6 +373,7 @@ function handlePostThinkingInput() {
   }
 }
 
+/** Main input handler. Delegates to state-specific handlers. */
 function handleInput() {
   if (Game.inputLocked) return;
 
@@ -332,6 +418,8 @@ document.addEventListener("keydown", (event) => {
 /**************************************************************
  *                     UNDO/REDO
  **************************************************************/
+
+/** Undo the last move. */
 function undoMove() {
   if (!Game.moves.length) return;
 
@@ -344,6 +432,7 @@ function undoMove() {
   );
 }
 
+/** Redo the last undone move. */
 function redoMove() {
   if (!Game.removedMoves.length) return;
 
@@ -352,6 +441,7 @@ function redoMove() {
   cancelAll(`*added ${(Game.moves.length % 2 === 0 ? "black* " : "white* ")}${toNatoString(added)}`);
 }
 
+/** Repeats the last spoken text. */
 function repeatSpeech() {
   Speech.speak(Speech.lastSpoken);
 }
