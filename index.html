@@ -5,34 +5,51 @@
 /**************************************************************
  *                      CONSTANTS
  **************************************************************/
-const STATES = {
+const STATES = Object.freeze({
   CONSTRUCTING: "constructing",
   THINKING: "thinking",
   POST_THINKING: "postThinking",
-};
+});
 
-/* ---------------- GLOBAL SPEED CONTROLS ---------------- */
-const GAME_SPEED = 1.0;     // 1 = normal, 2 = twice as fast, 0.5 = half speed
-const SPEECH_RATE = 1.0 * GAME_SPEED;    // speech speed scales with GAME_SPEED
+const TIMEOUTS = Object.freeze({
+  BASE_COORD_VALIDATE: 1000,
+  BASE_ENGINE_APPROVE: 2000,
+  BASE_INPUT_UNLOCK: 1000,
+  BASE_VOICE: 300,
+});
 
-// Helper to scale all time-based delays
-function sped(ms) {
-  return ms / GAME_SPEED;
-}
-
-/* ---------------- BASE DELAYS (unscaled) ---------------- */
-const BASE_COORD_VALIDATE_DELAY = 1000;
-const BASE_ENGINE_APPROVE_DELAY = 2000;
-const BASE_INPUT_UNLOCK_DELAY   = 1000;
-const BASE_VOICE_DELAY          = 300;
-
-const COORD_VALIDATE_DELAY = sped(BASE_COORD_VALIDATE_DELAY);
-const ENGINE_APPROVE_DELAY = sped(BASE_ENGINE_APPROVE_DELAY);
-const INPUT_UNLOCK_DELAY   = sped(BASE_INPUT_UNLOCK_DELAY);
-const VOICE_DELAY          = BASE_VOICE_DELAY / SPEECH_RATE;
+const GAME_SPEED = 1.0;
+const SPEECH_RATE = 1.0 * GAME_SPEED;
 
 const MAX_COORD_VALUE = 8;
 
+const COORD_VALIDATE_DELAY = TIMEOUTS.BASE_COORD_VALIDATE / GAME_SPEED;
+const ENGINE_APPROVE_DELAY = TIMEOUTS.BASE_ENGINE_APPROVE / GAME_SPEED;
+const INPUT_UNLOCK_DELAY   = TIMEOUTS.BASE_INPUT_UNLOCK / GAME_SPEED;
+const VOICE_DELAY          = TIMEOUTS.BASE_VOICE / SPEECH_RATE;
+
+/**************************************************************
+ *                      UTILS
+ **************************************************************/
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+const toNatoString = (str) => {
+  const nato = {
+    a: "alpha", b: "bravo", c: "charlie", d: "delta",
+    e: "echo", f: "foxtrot", g: "golf", h: "hotel",
+    i: "india", j: "juliett", k: "kilo", l: "lima",
+    m: "mike", n: "november", o: "oscar", p: "papa",
+    q: "quebec", r: "romeo", s: "sierra", t: "tango",
+    u: "uniform", v: "victor", w: "whiskey", x: "xray",
+    y: "yankee", z: "zulu"
+  };
+
+  return str
+    .toLowerCase()
+    .split("")
+    .map(ch => nato[ch] ? `*${nato[ch]}*` : ch)
+    .join("");
+};
 
 /**************************************************************
  *                      SPEECH MANAGER
@@ -44,49 +61,23 @@ class SpeechManager {
     this.lastSpoken = "";
   }
 
-  static toNatoStarString(str) {
-    const nato = {
-      a: "alpha", b: "bravo", c: "charlie", d: "delta",
-      e: "echo", f: "foxtrot", g: "golf", h: "hotel",
-      i: "india", j: "juliett", k: "kilo", l: "lima",
-      m: "mike", n: "november", o: "oscar", p: "papa",
-      q: "quebec", r: "romeo", s: "sierra", t: "tango",
-      u: "uniform", v: "victor", w: "whiskey", x: "xray",
-      y: "yankee", z: "zulu"
-    };
-
-    return str
-      .toLowerCase()
-      .split("")
-      .map(ch => nato[ch] ? `*${nato[ch]}*` : ch)
-      .join("");
-  }
-
   speak(text, delay = VOICE_DELAY) {
     if (!text) return;
 
     this.lastSpoken = text;
     console.log(text);
 
-    // Cancel any ongoing speech
     window.speechSynthesis.cancel();
-
-    // Unique session to prevent overlap
     this.sessionId++;
     const session = this.sessionId;
 
-    // Clear timeout from previous session
-    if (this.charTimeout) {
-      clearTimeout(this.charTimeout);
-      this.charTimeout = null;
-    }
+    if (this.charTimeout) clearTimeout(this.charTimeout);
 
     const parts = text.split("*");
     let pIndex = 0;
 
     const speakNextPart = () => {
-      if (session !== this.sessionId) return;
-      if (pIndex >= parts.length) return;
+      if (session !== this.sessionId || pIndex >= parts.length) return;
 
       const part = parts[pIndex];
       const isNormal = (pIndex % 2 === 1);
@@ -97,35 +88,31 @@ class SpeechManager {
         utter.rate = SPEECH_RATE;
         utter.onend = speakNextPart;
         setTimeout(() => window.speechSynthesis.speak(utter), 0);
-        return;
+      } else {
+        let cIndex = 0;
+        const speakNextChar = () => {
+          if (session !== this.sessionId || cIndex >= part.length) {
+            speakNextPart();
+            return;
+          }
+
+          const utter = new SpeechSynthesisUtterance(part[cIndex]);
+          utter.rate = SPEECH_RATE;
+          setTimeout(() => window.speechSynthesis.speak(utter), 0);
+
+          cIndex++;
+          this.charTimeout = setTimeout(speakNextChar, delay);
+        };
+
+        speakNextChar();
       }
-
-      let cIndex = 0;
-      const speakNextChar = () => {
-        if (session !== this.sessionId) return;
-        if (cIndex >= part.length) {
-          speakNextPart();
-          return;
-        }
-
-        const utter = new SpeechSynthesisUtterance(part[cIndex]);
-        utter.rate = SPEECH_RATE;
-        setTimeout(() => window.speechSynthesis.speak(utter), 0);
-
-        cIndex++;
-        this.charTimeout = setTimeout(speakNextChar, delay);
-      };
-
-      speakNextChar();
     };
 
-    setTimeout(speakNextPart, 0);
+    speakNextPart();
   }
 }
 
 const Speech = new SpeechManager();
-
-
 
 /**************************************************************
  *                    ENGINE MANAGER
@@ -141,10 +128,8 @@ class EngineManager {
       if (!data) return;
 
       if (data.startsWith("bestmove")) {
-        const move = data.split(" ")[1];
-        this.suggestedMove = move;
-        onMoveCallback(move);
-        return;
+        this.suggestedMove = data.split(" ")[1];
+        onMoveCallback(this.suggestedMove);
       }
 
       if (data.includes("score mate 0")) {
@@ -152,9 +137,7 @@ class EngineManager {
       }
     };
 
-    this.worker.postMessage("uci");
-    this.worker.postMessage("isready");
-    this.worker.postMessage("ucinewgame");
+    ["uci", "isready", "ucinewgame"].forEach(cmd => this.worker.postMessage(cmd));
   }
 
   setPosition(moves) {
@@ -163,8 +146,7 @@ class EngineManager {
 
   requestMove(moves) {
     this.setPosition(moves);
-    this.sideToMove = (moves.length % 2 === 0 ? "white" : "black");
-
+    this.sideToMove = moves.length % 2 === 0 ? "white" : "black";
     const depth = Math.min(5 + moves.length * 2, 15);
     this.worker.postMessage(`go depth ${depth}`);
   }
@@ -172,27 +154,21 @@ class EngineManager {
 
 let GameEngine = null;
 
-
-
 /**************************************************************
- *                     GAME STATE MANAGER
+ *                     GAME STATE
  **************************************************************/
 class GameState {
   constructor() {
     this.state = STATES.CONSTRUCTING;
     this.moves = [];
     this.removedMoves = [];
-
     this.coordinates = [];
     this.currentCoordinate = 0;
-
-    this.lastPressTime = 0;
-    this.firstPostPressTime = null;
-
     this.inputLocked = false;
-
     this.coordinateTimer = null;
     this.postThinkingTimer = null;
+    this.lastPressTime = 0;
+    this.firstPostPressTime = null;
   }
 
   resetInput() {
@@ -204,10 +180,7 @@ class GameState {
 
   mapCoordinate(index, value) {
     if (value < 1 || value > MAX_COORD_VALUE) return null;
-
-    return (index % 2 === 0)
-      ? "abcdefgh"[value - 1]
-      : String(value);
+    return index % 2 === 0 ? "abcdefgh"[value - 1] : String(value);
   }
 
   finalizeCoordinate() {
@@ -217,82 +190,61 @@ class GameState {
     this.coordinates.push(mapped);
     this.currentCoordinate = 0;
 
-    // Completed move
     if (this.coordinates.length === 4) {
       const move = this.coordinates.join("");
+      const color = this.moves.length % 2 === 0 ? "white" : "black";
 
-      Speech.speak(
-        "*Go* " +
-        SpeechManager.toNatoStarString(move) +
-        (this.moves.length % 2 === 0 ? " *white*" : " *black*")
-      );
-
+      Speech.speak(`*Go* ${toNatoString(move)} *${color}*`);
       this.moves.push(move);
       this.removedMoves = [];
 
       GameEngine.requestMove(this.moves);
-
       this.inputLocked = true;
       this.state = STATES.THINKING;
-
     } else {
-      Speech.speak("*Does* " + SpeechManager.toNatoStarString(this.coordinates.join("")));
+      Speech.speak(`*Does* ${toNatoString(this.coordinates.join(""))}`);
     }
   }
 }
 
 const Game = new GameState();
 
-
-
 /**************************************************************
- *                   INPUT & TIMER LOGIC
+ *                     INPUT & TIMERS
  **************************************************************/
 function startCoordinateTimer() {
   clearTimeout(Game.coordinateTimer);
-  Game.coordinateTimer = setTimeout(
-    () => Game.finalizeCoordinate(),
-    COORD_VALIDATE_DELAY
-  );
+  Game.coordinateTimer = setTimeout(() => Game.finalizeCoordinate(), COORD_VALIDATE_DELAY);
 }
 
 function startPostThinkingTimer() {
   Speech.speak("*Approve?*");
   clearTimeout(Game.postThinkingTimer);
-
   Game.postThinkingTimer = setTimeout(() => {
     acceptEngineMove();
     Game.firstPostPressTime = null;
   }, ENGINE_APPROVE_DELAY);
 }
 
-
-
 /**************************************************************
  *                        ACTIONS
  **************************************************************/
 function cancelAll(message = "*Cancelled*") {
   Speech.speak(message);
-
   clearTimeout(Game.coordinateTimer);
   clearTimeout(Game.postThinkingTimer);
-
   Game.inputLocked = true;
   setTimeout(() => Game.inputLocked = false, INPUT_UNLOCK_DELAY);
-
   Game.resetInput();
 }
 
 function acceptEngineMove() {
   if (!GameEngine.suggestedMove) return;
-
   Speech.speak("*Approved.*");
   Game.moves.push(GameEngine.suggestedMove);
   Game.removedMoves = [];
   GameEngine.suggestedMove = null;
-
   GameEngine.requestMove(Game.moves);
-
   Game.inputLocked = true;
   Game.state = STATES.THINKING;
 }
@@ -304,56 +256,47 @@ function rejectEngineMoveStartNew() {
   Speech.speak("*Disapproved.*");
 }
 
-
-
-
-
 /**************************************************************
- *                     MAIN INPUT HANDLER
+ *                    INPUT HANDLING
  **************************************************************/
-function handleInput() {
-  if (Game.inputLocked) return;
-
+function handleConstructingInput() {
   const now = performance.now();
   const delta = now - Game.lastPressTime;
   Game.lastPressTime = now;
 
-  switch (Game.state) {
-    case STATES.CONSTRUCTING: {
-      if (delta < COORD_VALIDATE_DELAY || Game.currentCoordinate === 0) {
-        Game.currentCoordinate++;
-        if (Game.currentCoordinate === 9) return cancelAll();
+  if (delta < COORD_VALIDATE_DELAY || Game.currentCoordinate === 0) {
+    Game.currentCoordinate++;
+    if (Game.currentCoordinate === 9) return cancelAll();
 
-        const mapped = Game.mapCoordinate(Game.coordinates.length, Game.currentCoordinate);
-        Speech.speak(SpeechManager.toNatoStarString(mapped ?? ""));
-      }
-      startCoordinateTimer();
-      break;
-    }
+    const mapped = Game.mapCoordinate(Game.coordinates.length, Game.currentCoordinate);
+    Speech.speak(toNatoString(mapped ?? ""));
+  }
+  startCoordinateTimer();
+}
 
-    case STATES.THINKING:
-      // Input ignored
-      break;
+function handlePostThinkingInput() {
+  const now = performance.now();
+  if (Game.firstPostPressTime === null) {
+    Game.firstPostPressTime = now;
+    startPostThinkingTimer();
+    return;
+  }
 
-    case STATES.POST_THINKING: {
-      if (Game.firstPostPressTime === null) {
-        Game.firstPostPressTime = now;
-        startPostThinkingTimer();
-        return;
-      }
-
-      const since = now - Game.firstPostPressTime;
-
-      if (since < ENGINE_APPROVE_DELAY) {
-        clearTimeout(Game.postThinkingTimer);
-        rejectEngineMoveStartNew();
-      }
-      break;
-    }
+  if (now - Game.firstPostPressTime < ENGINE_APPROVE_DELAY) {
+    clearTimeout(Game.postThinkingTimer);
+    rejectEngineMoveStartNew();
   }
 }
 
+function handleInput() {
+  if (Game.inputLocked) return;
 
+  switch (Game.state) {
+    case STATES.CONSTRUCTING: return handleConstructingInput();
+    case STATES.POST_THINKING: return handlePostThinkingInput();
+    case STATES.THINKING: return; // ignore input
+  }
+}
 
 /**************************************************************
  *                    ENGINE CALLBACKS
@@ -361,65 +304,57 @@ function handleInput() {
 GameEngine = new EngineManager(
   (bestMove) => {
     Game.inputLocked = false;
-    Speech.speak(
-      "*Best " +
-      GameEngine.sideToMove +
-      "*" +
-      SpeechManager.toNatoStarString(bestMove)
-    );
-
+    Speech.speak(`*Best ${GameEngine.sideToMove}*${toNatoString(bestMove)}`);
     Game.state = STATES.POST_THINKING;
     Game.firstPostPressTime = null;
   },
   () => Speech.speak("*Checkmate!*")
 );
 
-
-
 /**************************************************************
- *                   KEYBOARD EVENTS
+ *                     KEYBOARD EVENTS
  **************************************************************/
+const KEY_ACTIONS = {
+  Space: handleInput,
+  ArrowLeft: undoMove,
+  ArrowRight: redoMove,
+  ArrowUp: repeatSpeech
+};
+
 document.addEventListener("keydown", (event) => {
-
-  if (event.code === "Space") {
+  const action = KEY_ACTIONS[event.code];
+  if (action) {
     event.preventDefault();
-    handleInput();
-  }
-
-  if (event.code === "ArrowLeft") {
-    event.preventDefault();
-
-    if (Game.moves.length === 0) return;
-
-    const removed = Game.moves.pop();
-    Game.removedMoves.push(removed);
-
-    const last = Game.moves.length ? Game.moves[Game.moves.length - 1] : "";
-    cancelAll(
-      "*removed " +
-      (Game.moves.length % 2 === 0 ? "white* " : "black* ") +
-      SpeechManager.toNatoStarString(removed) +
-      " *last move* " +
-      SpeechManager.toNatoStarString(last)
-    );
-  }
-
-  if (event.code === "ArrowRight" && Game.removedMoves.length) {
-    event.preventDefault();
-    const added = Game.removedMoves.pop();
-    Game.moves.push(added);
-    cancelAll(
-      "*added " +
-      (Game.moves.length % 2 === 0 ? "black* " : "white* ") +
-      SpeechManager.toNatoStarString(added)
-    );
-  }
-
-  if (event.code === "ArrowUp") {
-    event.preventDefault();
-    Speech.speak(Speech.lastSpoken);
+    action();
   }
 });
+
+/**************************************************************
+ *                     UNDO/REDO
+ **************************************************************/
+function undoMove() {
+  if (!Game.moves.length) return;
+
+  const removed = Game.moves.pop();
+  Game.removedMoves.push(removed);
+
+  const last = Game.moves.length ? Game.moves[Game.moves.length - 1] : "";
+  cancelAll(
+    `*removed ${(Game.moves.length % 2 === 0 ? "white* " : "black* ")}${toNatoString(removed)} *last move* ${toNatoString(last)}`
+  );
+}
+
+function redoMove() {
+  if (!Game.removedMoves.length) return;
+
+  const added = Game.removedMoves.pop();
+  Game.moves.push(added);
+  cancelAll(`*added ${(Game.moves.length % 2 === 0 ? "black* " : "white* ")}${toNatoString(added)}`);
+}
+
+function repeatSpeech() {
+  Speech.speak(Speech.lastSpoken);
+}
   </script>
 </body>
 </html>
