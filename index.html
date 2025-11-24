@@ -440,6 +440,15 @@ function acceptEngineMove() {
   Game.state = STATES.THINKING;
 }
 
+/** Rejects the engine's move and starts a new input. */
+function rejectEngineMoveStartNew() {
+  Game.state = STATES.CONSTRUCTING;
+  Game.coordinates = [];
+  Game.currentCoordinate = 0;
+  Speech.speak("*Disapproved.*");
+  updateBoard();
+}
+
 /**************************************************************
  *                    INPUT HANDLING
  **************************************************************/
