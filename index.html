@@ -583,7 +583,7 @@ function redoMove() {
 
 function undoAllMoves() {
   if (!Game.moves.length) return;
-  
+
   while (Game.moves.length) {
     Game.chess.undo();
     Game.removedMoves.push(Game.moves.pop());
@@ -603,27 +603,13 @@ function repeatSpeech() {
  **************************************************************/
 
 const PIECES = {
-  p: "♟",
-  r: "♜",
-  n: "♞",
-  b: "♝",
-  q: "♛",
-  k: "♚"
+  p: "♟\uFE0E",
+  r: "♜\uFE0E",
+  n: "♞\uFE0E",
+  b: "♝\uFE0E",
+  q: "♛\uFE0E",
+  k: "♚\uFE0E"
 };
-
-
-function initialBoard() {
-  return [
-    ["b.r","b.n","b.b","b.q","b.k","b.b","b.n","b.r"],
-    ["b.p","b.p","b.p","b.p","b.p","b.p","b.p","b.p"],
-    ["","","","","","","",""],
-    ["","","","","","","",""],
-    ["","","","","","","",""],
-    ["","","","","","","",""],
-    ["w.p","w.p","w.p","w.p","w.p","w.p","w.p","w.p"],
-    ["w.r","w.n","w.b","w.q","w.k","w.b","w.n","w.r"]
-  ];
-}
 
 function sqToRC(sq) {
   const file = sq.charCodeAt(0) - 97;
@@ -631,42 +617,30 @@ function sqToRC(sq) {
   return { r: rank, c: file };
 }
 
-function applyMove(board, move, color) {
-  const from = sqToRC(move.slice(0,2));
-  const to   = sqToRC(move.slice(2,4));
+function renderBoard() {
+  const boardEl = document.getElementById("board");
+  boardEl.innerHTML = "";
 
-  const piece = board[from.r][from.c];
-  board[from.r][from.c] = "";
+  const matrix = Game.chess.board(); 
+  // chess.board() returns an 8×8 array of objects or null
 
-  if (move.length === 5) {
-    const promo = move[4];
-    board[to.r][to.c] = `${color}.${promo}`;
-  } else {
-    board[to.r][to.c] = piece;
-  }
-}
-
-function renderBoard(boardMatrix) {
-  const board = document.getElementById("board");
-  board.innerHTML = "";
-
-  // Render 64 squares
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       const div = document.createElement("div");
       div.className = "square " + ((r + c) % 2 ? "dark" : "light");
+      div.dataset.rank = r;
+      div.dataset.file = c;
 
-      const piece = boardMatrix[r][c];
+      const piece = matrix[r][c];
       if (piece) {
-        const [color, type] = piece.split(".");
+        const type = piece.type;
+        const color = piece.color; // 'w' or 'b'
+
         div.textContent = PIECES[type];
         div.classList.add("piece", color === "w" ? "white" : "black");
       }
 
-      div.dataset.rank = r;
-      div.dataset.file = c;
-
-      board.appendChild(div);
+      boardEl.appendChild(div);
     }
   }
 
@@ -675,47 +649,36 @@ function renderBoard(boardMatrix) {
   const ranks = "87654321".split("");
 
   for (let i = 0; i < 8; i++) {
-    // file label
     let f = document.createElement("div");
     f.className = "coord file-label";
     f.style.left = ((i + 0.5) * 12.5) + "%";
     f.textContent = files[i];
-    board.appendChild(f);
+    boardEl.appendChild(f);
 
-    // rank label
-    let r = document.createElement("div");
-    r.className = "coord rank-label";
-    r.style.top = ((i + 0.5) * 12.5) + "%";
-    r.textContent = ranks[i];
-    board.appendChild(r);
+    let rEl = document.createElement("div");
+    rEl.className = "coord rank-label";
+    rEl.style.top = ((i + 0.5) * 12.5) + "%";
+    rEl.textContent = ranks[i];
+    boardEl.appendChild(rEl);
   }
 
   // Highlight last move
-  const moves = Game.moves;
-  if (moves.length) {
-    const move = moves[moves.length - 1];
+  if (Game.moves.length) {
+    const move = Game.moves[Game.moves.length - 1];
     const from = sqToRC(move.slice(0,2));
     const to   = sqToRC(move.slice(2,4));
 
-    const squares = [...board.children];
-    squares.forEach(sq => {
-      if (+sq.dataset?.rank === from.r && +sq.dataset?.file === from.c)
+    [...boardEl.children].forEach(sq => {
+      if (+sq.dataset.rank === from.r && +sq.dataset.file === from.c)
         sq.classList.add("highlight");
-      if (+sq.dataset?.rank === to.r   && +sq.dataset?.file === to.c)
+      if (+sq.dataset.rank === to.r   && +sq.dataset.file === to.c)
         sq.classList.add("highlight");
     });
   }
 }
 
 function updateBoard() {
-  let board = initialBoard();
-
-  Game.moves.forEach((move, index) => {
-    const color = index % 2 === 0 ? "w" : "b";
-    applyMove(board, move, color);
-  });
-
-  renderBoard(board);
+  renderBoard();
 }
 
 /**************************************************************
