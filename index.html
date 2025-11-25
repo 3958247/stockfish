@@ -508,6 +508,8 @@ GameEngine = new EngineManager(
   () => Speech.speak("*Checkmate!*")
 );
 
+GameEngine.requestMove(Game.moves);
+
 /**************************************************************
  *                     KEYBOARD EVENTS
  **************************************************************/
@@ -516,7 +518,7 @@ const KEY_ACTIONS = {
   ArrowLeft: undoMove,
   ArrowRight: redoMove,
   ArrowUp: repeatSpeech,
-  ArrowDown: () => location.reload()
+  ArrowDown: undoAllMoves
 };
 
 document.addEventListener("keydown", (event) => {
@@ -578,6 +580,18 @@ function redoMove() {
 
   updateBoard();
 }
+
+function undoAllMoves() {
+  if (!Game.moves.length) return;
+  
+  while (Game.moves.length) {
+    Game.chess.undo();
+    Game.removedMoves.push(Game.moves.pop());
+  }
+  cancelAll("*All moves removed*");
+  updateBoard();
+}
+
 
 /** Repeats the last spoken text. */
 function repeatSpeech() {
